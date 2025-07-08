@@ -1,0 +1,11 @@
+{
+  "description": "Analyzes content for Zettelkasten best practices and suggests improvements",
+  "tags": ["zettelkasten", "analysis", "knowledge-management", "note-taking"],
+  "author": "Pattern MCP Server",
+  "version": "1.0",
+  "examples": [
+    "Analyze this note about quantum computing",
+    "Help me make this fleeting note permanent",
+    "Check if this note is truly atomic"
+  ]
+}

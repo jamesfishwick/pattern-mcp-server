@@ -1,0 +1,12 @@
+{
+  "description": "Comprehensive security review of code focusing on OWASP Top 10 and secure coding practices",
+  "tags": ["security", "code-review", "owasp", "vulnerability", "defensive"],
+  "author": "Pattern MCP Server", 
+  "version": "1.0",
+  "use_cases": [
+    "Security review of new features before deployment",
+    "Audit existing codebase for vulnerabilities",
+    "Educational security analysis for learning",
+    "Pre-commit security checks"
+  ]
+}

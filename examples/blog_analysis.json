@@ -1,0 +1,12 @@
+{
+  "description": "Analyzes blog posts for content quality, structure, engagement, and SEO optimization",
+  "tags": ["blog", "content", "analysis", "seo", "writing"],
+  "author": "Pattern MCP Server",
+  "version": "1.0",
+  "use_cases": [
+    "Review draft blog posts before publishing",
+    "Audit existing content for improvement opportunities", 
+    "Analyze competitor blog posts for insights",
+    "Get feedback on content strategy and messaging"
+  ]
+}
