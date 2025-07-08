@@ -4,31 +4,44 @@ Pattern Content MCP Server
 
 Exposes pattern/prompt content from Fabric and custom directories
 for direct use by LLMs via the Model Context Protocol.
+
+Version: 1.0.0
+Author: James Fishwick
+License: MIT
 """
 
-import os
+import logging
+
 import asyncio
 import json
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
+
 import mcp
 from mcp.server import Server
-from mcp.types import (
-    Tool,
-    TextContent,
-    Resource,
-    ResourceTemplate,
-    ResourceContents
-)
+from mcp.types import Resource, TextContent, Tool
+
 
 class PatternServer:
-    def __init__(self):
+    def __init__(self, log_level: str = "INFO"):
+        # Setup logging
+        logging.basicConfig(
+            level=getattr(logging, log_level.upper()),
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        )
+        self.logger = logging.getLogger(__name__)
+
         self.server = Server("pattern-content-server")
         self.fabric_patterns_dir = Path.home() / ".config" / "fabric" / "patterns"
         self.custom_patterns_dir = Path.home() / ".config" / "custom_patterns"
 
         # Ensure custom directory exists
-        self.custom_patterns_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.custom_patterns_dir.mkdir(parents=True, exist_ok=True)
+            self.logger.info(f"Custom patterns directory: {self.custom_patterns_dir}")
+        except Exception as e:
+            self.logger.error(f"Failed to create custom patterns directory: {e}")
+            raise
 
         # Cache for patterns
         self.patterns_cache: Dict[str, Dict[str, str]] = {}
@@ -53,15 +66,15 @@ class PatternServer:
                                 "type": "string",
                                 "enum": ["all", "fabric", "custom"],
                                 "description": "Filter patterns by source",
-                                "default": "all"
+                                "default": "all",
                             },
                             "tags": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "Filter patterns by tags (if metadata available)"
-                            }
-                        }
-                    }
+                                "description": "Filter patterns by tags (if metadata available)",
+                            },
+                        },
+                    },
                 ),
                 Tool(
                     name="get_pattern",
@@ -71,11 +84,11 @@ class PatternServer:
                         "properties": {
                             "name": {
                                 "type": "string",
-                                "description": "Name of the pattern to retrieve"
+                                "description": "Name of the pattern to retrieve",
                             }
                         },
-                        "required": ["name"]
-                    }
+                        "required": ["name"],
+                    },
                 ),
                 Tool(
                     name="search_patterns",
@@ -85,16 +98,16 @@ class PatternServer:
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "Search query to find in pattern content or metadata"
+                                "description": "Search query to find in pattern content or metadata",
                             },
                             "limit": {
                                 "type": "integer",
                                 "description": "Maximum number of results to return",
-                                "default": 10
-                            }
+                                "default": 10,
+                            },
                         },
-                        "required": ["query"]
-                    }
+                        "required": ["query"],
+                    },
                 ),
                 Tool(
                     name="create_pattern",
@@ -104,20 +117,20 @@ class PatternServer:
                         "properties": {
                             "name": {
                                 "type": "string",
-                                "description": "Name for the new pattern"
+                                "description": "Name for the new pattern",
                             },
                             "content": {
                                 "type": "string",
-                                "description": "The pattern content/prompt"
+                                "description": "The pattern content/prompt",
                             },
                             "metadata": {
                                 "type": "object",
-                                "description": "Optional metadata (tags, description, etc.)"
-                            }
+                                "description": "Optional metadata (tags, description, etc.)",
+                            },
                         },
-                        "required": ["name", "content"]
-                    }
-                )
+                        "required": ["name", "content"],
+                    },
+                ),
             ]
 
         @self.server.call_tool()
@@ -127,7 +140,7 @@ class PatternServer:
             if name == "list_patterns":
                 result = await self.list_patterns(
                     source=arguments.get("source", "all"),
-                    tags=arguments.get("tags", [])
+                    tags=arguments.get("tags", []),
                 )
                 return [result]
 
@@ -137,8 +150,7 @@ class PatternServer:
 
             elif name == "search_patterns":
                 result = await self.search_patterns(
-                    arguments["query"],
-                    arguments.get("limit", 10)
+                    arguments["query"], arguments.get("limit", 10)
                 )
                 return [result]
 
@@ -146,7 +158,7 @@ class PatternServer:
                 result = await self.create_pattern(
                     arguments["name"],
                     arguments["content"],
-                    arguments.get("metadata", {})
+                    arguments.get("metadata", {}),
                 )
                 return [result]
 
@@ -167,7 +179,7 @@ class PatternServer:
                         uri=mcp.types.AnyUrl(f"pattern://{pattern_name}"),
                         name=pattern_name,
                         mimeType="text/markdown",
-                        description=f"Pattern: {pattern_name}"
+                        description=f"Pattern: {pattern_name}",
                     )
                 )
 
@@ -181,57 +193,96 @@ class PatternServer:
                 pattern_name = uri_str.replace("pattern://", "")
                 result = await self.get_pattern(pattern_name)
 
-                return [mcp.types.ReadResourceContents(
-                    type="text",
-                    text=result.content[0].text
-                )]
+                return [
+                    mcp.types.ReadResourceContents(
+                        type="text", text=result.content[0].text
+                    )
+                ]
 
             raise ValueError(f"Unknown resource URI: {uri}")
 
     async def load_patterns(self):
         """Load all patterns into cache"""
+        self.logger.info("Loading patterns...")
         self.patterns_cache.clear()
+        pattern_count = 0
 
         # Load Fabric patterns
-        if self.fabric_patterns_dir.exists():
-            for pattern_dir in self.fabric_patterns_dir.iterdir():
-                if pattern_dir.is_dir():
-                    system_file = pattern_dir / "system.md"
-                    user_file = pattern_dir / "user.md"
+        try:
+            if self.fabric_patterns_dir.exists():
+                self.logger.info(
+                    f"Loading Fabric patterns from {self.fabric_patterns_dir}"
+                )
+                for pattern_dir in self.fabric_patterns_dir.iterdir():
+                    try:
+                        if pattern_dir.is_dir():
+                            system_file = pattern_dir / "system.md"
+                            user_file = pattern_dir / "user.md"
 
-                    if system_file.exists() or user_file.exists():
-                        pattern_data = {
-                            "name": pattern_dir.name,
-                            "source": "fabric",
-                            "path": str(pattern_dir)
-                        }
+                            if system_file.exists() or user_file.exists():
+                                pattern_data = {
+                                    "name": pattern_dir.name,
+                                    "source": "fabric",
+                                    "path": str(pattern_dir),
+                                }
 
-                        if system_file.exists():
-                            pattern_data["system"] = system_file.read_text()
+                                if system_file.exists():
+                                    pattern_data["system"] = system_file.read_text(
+                                        encoding="utf-8"
+                                    )
 
-                        if user_file.exists():
-                            pattern_data["user"] = user_file.read_text()
+                                if user_file.exists():
+                                    pattern_data["user"] = user_file.read_text(
+                                        encoding="utf-8"
+                                    )
 
-                        self.patterns_cache[pattern_dir.name] = pattern_data
+                                self.patterns_cache[pattern_dir.name] = pattern_data
+                                pattern_count += 1
+                    except Exception as e:
+                        self.logger.warning(
+                            f"Failed to load Fabric pattern {pattern_dir.name}: {e}"
+                        )
+            else:
+                self.logger.info("Fabric patterns directory not found")
+        except Exception as e:
+            self.logger.error(f"Error loading Fabric patterns: {e}")
 
         # Load custom patterns
-        if self.custom_patterns_dir.exists():
-            for pattern_file in self.custom_patterns_dir.glob("*.md"):
-                pattern_name = pattern_file.stem
+        try:
+            if self.custom_patterns_dir.exists():
+                self.logger.info(
+                    f"Loading custom patterns from {self.custom_patterns_dir}"
+                )
+                for pattern_file in self.custom_patterns_dir.glob("*.md"):
+                    try:
+                        pattern_name = pattern_file.stem
 
-                # Check for metadata file
-                metadata_file = self.custom_patterns_dir / f"{pattern_name}.json"
-                metadata = {}
-                if metadata_file.exists():
-                    metadata = json.loads(metadata_file.read_text())
+                        # Check for metadata file
+                        metadata_file = (
+                            self.custom_patterns_dir / f"{pattern_name}.json"
+                        )
+                        metadata = {}
+                        if metadata_file.exists():
+                            metadata = json.loads(
+                                metadata_file.read_text(encoding="utf-8")
+                            )
 
-                self.patterns_cache[pattern_name] = {
-                    "name": pattern_name,
-                    "source": "custom",
-                    "path": str(pattern_file),
-                    "content": pattern_file.read_text(),
-                    "metadata": metadata
-                }
+                        self.patterns_cache[pattern_name] = {
+                            "name": pattern_name,
+                            "source": "custom",
+                            "path": str(pattern_file),
+                            "content": pattern_file.read_text(encoding="utf-8"),
+                            "metadata": metadata,
+                        }
+                        pattern_count += 1
+                    except Exception as e:
+                        self.logger.warning(
+                            f"Failed to load custom pattern {pattern_file.name}: {e}"
+                        )
+        except Exception as e:
+            self.logger.error(f"Error loading custom patterns: {e}")
+
+        self.logger.info(f"Loaded {pattern_count} patterns total")
 
     async def list_patterns(self, source: str = "all", tags: List[str] = None):
         """List available patterns"""
@@ -244,24 +295,23 @@ class PatternServer:
                 continue
 
             # Filter by tags if provided
-            if tags and data.get("metadata", {}).get("tags"):
-                pattern_tags = data["metadata"]["tags"]
+            if tags:
+                pattern_tags = data.get("metadata", {}).get("tags", [])
                 if not any(tag in pattern_tags for tag in tags):
                     continue
 
-            patterns.append({
-                "name": name,
-                "source": data["source"],
-                "description": data.get("metadata", {}).get("description", ""),
-                "tags": data.get("metadata", {}).get("tags", [])
-            })
+            patterns.append(
+                {
+                    "name": name,
+                    "source": data["source"],
+                    "description": data.get("metadata", {}).get("description", ""),
+                    "tags": data.get("metadata", {}).get("tags", []),
+                }
+            )
 
         return TextContent(
             type="text",
-            text=json.dumps({
-                "patterns": patterns,
-                "total": len(patterns)
-            }, indent=2)
+            text=json.dumps({"patterns": patterns, "total": len(patterns)}, indent=2),
         )
 
     async def get_pattern(self, name: str):
@@ -270,10 +320,7 @@ class PatternServer:
 
         if name not in self.patterns_cache:
             return TextContent(
-                type="text",
-                text=json.dumps({
-                    "error": f"Pattern '{name}' not found"
-                })
+                type="text", text=json.dumps({"error": f"Pattern '{name}' not found"})
             )
 
         pattern = self.patterns_cache[name]
@@ -290,12 +337,15 @@ class PatternServer:
 
         return TextContent(
             type="text",
-            text=json.dumps({
-                "name": name,
-                "source": pattern["source"],
-                "content": content,
-                "metadata": pattern.get("metadata", {})
-            }, indent=2)
+            text=json.dumps(
+                {
+                    "name": name,
+                    "source": pattern["source"],
+                    "content": content,
+                    "metadata": pattern.get("metadata", {}),
+                },
+                indent=2,
+            ),
         )
 
     async def search_patterns(self, query: str, limit: int = 10):
@@ -333,12 +383,14 @@ class PatternServer:
                     score += 2
 
             if score > 0:
-                results.append({
-                    "name": name,
-                    "source": data["source"],
-                    "score": score,
-                    "description": data.get("metadata", {}).get("description", "")
-                })
+                results.append(
+                    {
+                        "name": name,
+                        "source": data["source"],
+                        "score": score,
+                        "description": data.get("metadata", {}).get("description", ""),
+                    }
+                )
 
         # Sort by score and limit
         results.sort(key=lambda x: x["score"], reverse=True)
@@ -346,10 +398,7 @@ class PatternServer:
 
         return TextContent(
             type="text",
-            text=json.dumps({
-                "results": results,
-                "total": len(results)
-            }, indent=2)
+            text=json.dumps({"results": results, "total": len(results)}, indent=2),
         )
 
     async def create_pattern(self, name: str, content: str, metadata: Dict):
@@ -359,9 +408,7 @@ class PatternServer:
         if pattern_file.exists():
             return TextContent(
                 type="text",
-                text=json.dumps({
-                    "error": f"Pattern '{name}' already exists"
-                })
+                text=json.dumps({"error": f"Pattern '{name}' already exists"}),
             )
 
         # Save pattern content
@@ -377,19 +424,19 @@ class PatternServer:
 
         return TextContent(
             type="text",
-            text=json.dumps({
-                "message": f"Pattern '{name}' created successfully",
-                "path": str(pattern_file)
-            })
+            text=json.dumps(
+                {
+                    "message": f"Pattern '{name}' created successfully",
+                    "path": str(pattern_file),
+                }
+            ),
         )
 
     async def run(self):
         """Run the MCP server"""
         async with mcp.stdio_server() as (read_stream, write_stream):
             await self.server.run(
-                read_stream,
-                write_stream,
-                self.server.create_initialization_options()
+                read_stream, write_stream, self.server.create_initialization_options()
             )
 
 
